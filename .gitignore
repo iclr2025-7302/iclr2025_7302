@@ -1,0 +1,8 @@
+plots/
+models/
+
+*.h5
+*.png
+
+settings.json
+*.csv
