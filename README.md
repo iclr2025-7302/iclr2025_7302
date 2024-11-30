@@ -4,9 +4,9 @@
 It is useful to create a new user-wide Julia env that is not constrained to one repository or directory. Julia offers this feature as "shared env", which can be used when activating julia in the command line. VSCode also has some button (at the bottom) that allows to set the julia env.
 
 
-You can create a new Julia env called "myenv" like this:
+You can create a new Julia env called "bnn_mp" like this:
 ``` bash
-julia --project=@myenv --threads auto
+julia --project=@bnn_mp --threads auto
 ```
 
 Next, install all dependencies:
@@ -20,9 +20,29 @@ import Pkg; Pkg.add("CUDA")
 ```
 
 
-### Getting started
+### Running the experiments
 
-It is probably a good idea to start by running the training code in `general_training_scripts/mnist.jl`. After first getting a feeling for how the different high-level APIs come together, it will probably be easier to explore the implementation subsequently.
+All of our experimental code is available in the different files on top-level.
+You can run all experiments at once by running 
+``` bash
+./run_all_experiments.sh
+```
+The **CIFAR-10** experiments can be run individually via
+``` bash
+julia --project=@bnn_mp cifar10_exp.jl &&
+python cifar10_exp.py --optimizer=AdamW &&
+python cifar10_exp.py --optimzier=IVON &&
+julia --project=@bnn_mp cifar10_eval.jl
+```
+The **synthetic** data demonstration can be run individually via
+``` bash
+julia --project=@bnn_mp toy_ood_uncertainty.jl
+```
+
+### Library Overview
+
+It is probably a good idea to start by running the training code in `example_training_scripts/mnist_regression.jl`. 
+After first getting a feeling for how the different high-level APIs come together, it will probably be easier to explore the implementation subsequently.
 
 Nevertheless, here is a short overview of the most important files in the `lib`:
 
@@ -34,18 +54,7 @@ Nevertheless, here is a short overview of the most important files in the `lib`:
 
 * **gaussian.jl**: Gaussian1d type with lots of operations around it. There is also a barely-used multivariate GaussianDist.
 
-All of our experimental code is available in the different files on top-level.
-
-
-### Benchmarking against PyTorch
-There is a file `general_training_scripts/mnist.py` that contains a script for training on MNIST using PyTorch. If I want to compare some architecture, these will typically be my steps:
-1. Define some architecture and train the FactorGraph for a while
-2. Setup PyTorch with the identical architecture and choose a name for saving the model outputs.
-3. Load PyTorch outputs into the Julia script (see mnist files below the training loop).
-4. Plot out-of-distribution recognition and calibration of the two models (MP vs. PyTorch).
-
-
-### About Factor Graphs
+### Library Architecture Design Decisions
 We initially implemented a full factor graph with all its concepts: stateful variables, factors, and message equations. However, this design is inefficient and leads to unintuitive neural network code.
 
 Our FactorGraph represents a whole neural network layer by layer. Each layer object can be thought of as a subgraph that connects input variables (inputs / activations) with output variables (pre-activations / outputs). The messages to the inputs or outputs of a layer are then computed with stateless message equations.

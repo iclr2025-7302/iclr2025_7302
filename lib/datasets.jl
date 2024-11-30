@@ -162,6 +162,23 @@ function CIFAR10()
     return ClassificationDataset(FloatType.(X_train[:, :, :, o1]), Y_train[o1], FloatType.(X_test[:, :, :, o2]), Y_test[o2], num_classes)
 end
 
+function SVHN2()
+    print("Loading SVHN2...")
+    X_train, Y_train = MLDatasets.SVHN2(split=:train)[:]
+    X_test, Y_test = MLDatasets.SVHN2(split=:test)[:]
+    println(" Done!")
+
+    # Shuffle the order
+    n_train, n_test = size(X_train, ndims(X_train)), size(X_test, ndims(X_test))
+    o1 = Random.shuffle(1:n_train)
+    o2 = Random.shuffle(1:n_test)
+
+    # Classes should begin with 1
+    num_classes = 10
+    @assert all(1 .<= Y_train .<= num_classes)
+    @assert all(1 .<= Y_test .<= num_classes)
+    return ClassificationDataset(FloatType.(X_train[:, :, :, o1]), Y_train[o1], FloatType.(X_test[:, :, :, o2]), Y_test[o2], num_classes)
+end
 
 ###
 ### Simple Datasets

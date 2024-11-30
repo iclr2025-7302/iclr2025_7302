@@ -128,25 +128,40 @@ end
 
 
 # Multiplied with the prior, this would give the posterior of weights (aka weights marginal)
-function store_likelihood_messages(node::WeightFactor, out_W::AbstractArray{Gaussian1d}, out_bias::AbstractVector{Gaussian1d}; β_EMA::FloatType=1.0)
-    @assert size(out_W) == size(node.last_W_marginal)
-    @assert size(out_bias) == size(node.last_bias_marginal)
+function store_likelihood_messages(node::WeightFactor, out_W::AbstractArray{Gaussian1d}, marginal_W::AbstractArray{Gaussian1d}, out_bias::AbstractVector{Gaussian1d}, marginal_bias::AbstractVector{Gaussian1d}; β_EMA::FloatType=1.0)
+    @assert size(out_W) == size(marginal_W) == size(node.last_W_marginal)
+    @assert size(out_bias) == size(marginal_bias) == size(node.last_bias_marginal)
 
+    original_type = Base.typename(typeof(node.m_to_weights)).wrapper
     nd = ndims(node.m_to_weights)
     nb = ndims(node.m_to_biases)
     b = size(node.m_to_weights, nd)
     @assert nb == 2
 
-    # Update likelihood of weights
+    # Compute new messages
     m_to_weights = selectdim(node.m_to_weights, nd, 1:(b-1)) # exclude prior
-    out_W_new = prod(m_to_weights, dims=ndims(m_to_weights))
-    out_W .= EMA.(out_W, reshape(out_W_new, size(out_W_new)[1:(end-1)]), β_EMA)
-    free_if_CUDA!(out_W_new)
-    # prod!(reshape(out_W, size(out_W)..., 1), m_to_weights)
+    out_W_new = prod(m_to_weights, dims=nd)
+    out_W_new_reshaped = reshape(out_W_new, size(out_W_new)[1:(end-1)])
+    out_W_gpu = adapt(original_type, out_W)
 
-    # Update likelihood of biases
+    # Update W
+    @tullio out_W_new_reshaped[i] = EMA(out_W_gpu[i], out_W_new_reshaped[i], β_EMA)
+    update_messages_to_weights(marginal_W, out_W_gpu, out_W_new_reshaped)
+    out_W .= adapt(Array, out_W_new_reshaped)
+    free_if_CUDA!.([out_W_new, out_W_gpu])
+
+
+    # Compute new messages of biases
     m_to_biases = selectdim(node.m_to_biases, nb, 1:(b-1)) # exclude prior
-    prod!(reshape(out_bias, size(out_bias)..., 1), m_to_biases)
+    out_bias_new = prod(m_to_biases, dims=nb)
+    out_bias_new_reshaped = reshape(out_bias_new, size(out_bias_new)[1:(end-1)])
+    out_bias_gpu = adapt(original_type, out_bias)
+
+    # Update bias
+    @tullio out_bias_new_reshaped[i] = EMA(out_bias_gpu[i], out_bias_new_reshaped[i], β_EMA)
+    update_messages_to_weights(marginal_bias, out_bias_gpu, out_bias_new_reshaped)
+    out_bias .= adapt(Array, out_bias_new_reshaped)
+    free_if_CUDA!.([out_bias_new, out_bias_gpu])
     return
 end
 
@@ -1058,12 +1073,16 @@ end
 ###
 ### Trainer - allows continued training with a 2nd "train" call
 ###
-mutable struct Trainer{M_G<:AbstractMatrix{Gaussian1d},A_G<:AbstractArray{Gaussian1d},D_X<:AbstractArray{FloatType},D_Y<:Union{Matrix{FloatType},Vector{Int}}}
+mutable struct Trainer{V_G<:AbstractVector{Gaussian1d},M_G<:AbstractMatrix{Gaussian1d},A_G<:AbstractArray{Gaussian1d},A_G2<:AbstractArray{Gaussian1d},D_X<:AbstractArray{FloatType},D_Y<:Union{Matrix{FloatType},Vector{Int}}}
     fg::FactorGraph
-
-    Ws::Vector{A_G}
-    biases::Vector{M_G}
     weight_layers::Vector{WeightFactor}
+
+    # Store each message + marginal (updated continuously, recomputed once per epoch)
+    Ws::Vector{A_G}
+    marginals_W::Vector{A_G2}
+
+    biases::Vector{M_G}
+    marginals_bias::Vector{V_G}
 
     X::D_X
     Y::D_Y
@@ -1080,28 +1099,38 @@ function Trainer(fg::FactorGraph, X::AbstractArray{FloatType}, Y::Union{Matrix{F
 
     # Store messages to weights from batches
     Ws = []
+    Ws_marginal = []
     biases = []
+    biases_marginal = []
     weight_layers = Vector{WeightFactor}()
 
     for layer in fg.layers
         if isa(layer, WeightFactor)
-            W_i = adapt(fg.device_array, NaturalGaussianTensor(size(layer.last_W_marginal)..., 1 + num_batches))
-            bias_i = adapt(fg.device_array, NaturalGaussianTensor(size(layer.last_bias_marginal)..., 1 + num_batches))
+            W_i = NaturalGaussianTensor(size(layer.last_W_marginal)..., 1 + num_batches)
+            W_i_marginal = adapt(fg.device_array, NaturalGaussianTensor(size(layer.last_W_marginal)...))
 
-            # Store the weight prior in the last index
+            bias_i = NaturalGaussianTensor(size(layer.last_bias_marginal)..., 1 + num_batches)
+            bias_i_marginal = adapt(fg.device_array, NaturalGaussianTensor(size(layer.last_bias_marginal)...))
+
+            # Store the weight prior in the last index and as the marginal
             nd_Wi, nd_tW = ndims(W_i), ndims(layer.m_to_weights)
-            selectdim(W_i, nd_Wi, size(W_i, nd_Wi)) .= selectdim(layer.m_to_weights, nd_tW, size(layer.m_to_weights, nd_tW))
+            selectdim(W_i, nd_Wi, size(W_i, nd_Wi)) .= adapt(Array, selectdim(layer.m_to_weights, nd_tW, size(layer.m_to_weights, nd_tW)))
+            W_i_marginal .= selectdim(layer.m_to_weights, nd_tW, size(layer.m_to_weights, nd_tW))
 
             # Store the bias prior
             nd_bi, nd_tb = ndims(bias_i), ndims(layer.m_to_biases)
-            selectdim(bias_i, nd_bi, size(bias_i, nd_bi)) .= selectdim(layer.m_to_biases, nd_tb, size(layer.m_to_biases, nd_tb))
+            selectdim(bias_i, nd_bi, size(bias_i, nd_bi)) .= adapt(Array, selectdim(layer.m_to_biases, nd_tb, size(layer.m_to_biases, nd_tb)))
+            bias_i_marginal .= selectdim(layer.m_to_biases, nd_tb, size(layer.m_to_biases, nd_tb))
 
             push!(Ws, W_i)
             push!(biases, bias_i)
             push!(weight_layers, layer)
+
+            push!(Ws_marginal, W_i_marginal)
+            push!(biases_marginal, bias_i_marginal)
         end
     end
-    return Trainer(fg, [Ws...], [biases...], weight_layers, X, Y, num_batches, 0, Random.MersenneTwister(42))
+    return Trainer(fg, weight_layers, [Ws...], [Ws_marginal...], [biases...], [biases_marginal...], X, Y, num_batches, 0, Random.MersenneTwister(42))
 end
 
 # Run batched message passing: Iterate one batch, then keep only their joint likelihood and throw away individual messages.
@@ -1117,24 +1146,26 @@ function train(trainer::Trainer; num_epochs::Int=1, num_training_its::Int=2, sil
             i1 = 1 + trainer.fg.batch_size * (b - 1)
             i2 = min(size(trainer.X, ndims(trainer.X)), trainer.fg.batch_size * b)
 
-            # Set new priors
+            # Compute new priors
             for l_i in eachindex(trainer.Ws)
-                W, bias, layer = trainer.Ws[l_i], trainer.biases[l_i], trainer.weight_layers[l_i]
-                nd = ndims(W)
-                nb = ndims(bias)
+                W, marginal_W, bias, marginal_bias, layer = trainer.Ws[l_i], trainer.marginals_W[l_i], trainer.biases[l_i], trainer.marginals_bias[l_i], trainer.weight_layers[l_i]
+                nd, nb = ndims(W), ndims(bias)
 
-                # Product of all batch messages
-                prior_W_ = prod(W, dims=nd)
-                prior_W = selectdim(prior_W_, nd, 1)
-                prior_bias_ = prod(bias, dims=nb)
-                prior_bias = selectdim(prior_bias_, nb, 1)
+                # Recompute marginals every time
+                # old_W_ = prod(W, dims=nd)
+                # old_W = selectdim(old_W_, nd, 1)
+                # old_bias_ = prod(bias, dims=nb)
+                # old_bias = selectdim(old_bias_, nb, 1)
 
-                # Divide current batch out
-                prior_W ./= selectdim(W, nd, b)
-                prior_bias ./= selectdim(bias, nb, b)
+                # Compute m_to_W and m_to_bias (just named differently here because we will reuse the array)
+                prior_W = adapt(trainer.fg.device_array, selectdim(W, nd, b))
+                prior_bias = adapt(trainer.fg.device_array, selectdim(bias, nb, b))
+
+                @tullio prior_W[i] = marginal_W[i] / prior_W[i]
+                @tullio prior_bias[i] = marginal_bias[i] / prior_bias[i]
+
                 reset_for_batch(layer, prior_W, prior_bias)
-
-                free_if_CUDA!.((prior_W_, prior_bias))
+                free_if_CUDA!.((prior_W, prior_bias))
             end
 
             # Reset layer, if needed
@@ -1166,9 +1197,26 @@ function train(trainer::Trainer; num_epochs::Int=1, num_training_its::Int=2, sil
 
             # Store weight results
             for l_i in eachindex(trainer.Ws)
-                W, bias, layer = trainer.Ws[l_i], trainer.biases[l_i], trainer.weight_layers[l_i]
-                store_likelihood_messages(layer, selectdim(W, ndims(W), b), selectdim(bias, ndims(bias), b); β_EMA)
+                W, W_marginal, bias, bias_marginal, layer = trainer.Ws[l_i], trainer.marginals_W[l_i], trainer.biases[l_i], trainer.marginals_bias[l_i], trainer.weight_layers[l_i]
+
+                # Store new messages in "W" and "bias"
+                store_likelihood_messages(layer, selectdim(W, ndims(W), b), W_marginal, selectdim(bias, ndims(bias), b), bias_marginal; β_EMA)
             end
+        end
+
+        # Recompute marginals
+        for l_i in eachindex(trainer.Ws)
+            W, W_marginal, bias, bias_marginal = trainer.Ws[l_i], trainer.marginals_W[l_i], trainer.biases[l_i], trainer.marginals_bias[l_i]
+
+            prod_W = prod(W, dims=ndims(W))
+            prod_bias = prod(bias, dims=ndims(bias))
+            W_marginal_new = adapt(trainer.fg.device_array, selectdim(prod_W, ndims(W), 1))
+            bias_marginal_new = adapt(trainer.fg.device_array, selectdim(prod_bias, ndims(bias), 1))
+
+            W_marginal .= W_marginal_new
+            bias_marginal .= bias_marginal_new
+
+            free_if_CUDA!.([W_marginal_new, bias_marginal_new])
         end
     end
 end

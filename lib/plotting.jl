@@ -119,66 +119,6 @@ function plot_posterior_preds(d::Dataset, X_preds::Matrix{FloatType}, posterior_
 end
 
 
-###
-### Evaluation Plots for Classification Data
-###
-function get_sorted_accuracies(probs::Matrix{FloatType}, labels::Vector{Int})
-    # Order of uncertainties:
-    order = reverse(sortperm(maximum(probs, dims=1)[1, :])) # highest certainty comes first
-    probs_sorted = probs[:, order]
-    @tullio preds_sorted[j] := argmax(probs_sorted[:, j])
-    labels_sorted = labels[order]
-
-    # Compute accuracy for each cutoff
-    accuracies = cumsum(preds_sorted .== labels_sorted)
-    accuracies = accuracies ./ (1:length(accuracies))
-    accuracies = reverse(accuracies)
-
-    # First entry is now sum over all (throwing away nothing), last entry means keeping only the highest certainty item
-    x = (1:length(accuracies)) ./ length(accuracies)
-    return x, accuracies
-end
-
-# Assumes the y-values are all >= 0 and belong to x-values that are equally-spaced from 0 to 1
-function area_under_curve(y_values::Vector{Float64})
-    n = length(y_values)
-    h = 1.0 / (n - 1)  # The uniform spacing between x-values
-
-    # Trapezoidal rule: sum the areas of the trapezoids
-    area = h * (0.5 * y_values[1] + sum(y_values[2:end-1]) + 0.5 * y_values[end])
-    return area
-end
-
-# Assumes the entropy of probs2 to be higher
-function get_roc(probs1::Matrix{FloatType}, probs2::Matrix{FloatType})
-    # Compute entropies
-    @tullio entropy1[j] := probs1[i, j] * log(probs1[i, j])
-    @tullio entropy2[j] := probs2[i, j] * log(probs2[i, j])
-
-    n = length(entropy1)
-    m = length(entropy2)
-
-    # p = histogram(entropy1, label="MNIST", fillalpha=0.3)
-    # histogram!(p, entropy2, label="Rotated MNIST", fillalpha=0.3)
-    # display(p)
-
-    # Generate merged array
-    entropies = [entropy1; entropy2]
-    nums = [zeros(n); ones(m)]
-
-    order = sortperm(entropies)
-    nums = nums[order]
-    sums = cumsum(nums)
-
-    # Compute roc points
-    @tullio tp[i] := sums[i] / m
-    @tullio fp[i] := (i - sums[i]) / n
-
-    # Using the trapezoidal rule to compute AUC
-    auc = sum((fp[2:end] - fp[1:end-1]) .* (tp[2:end] + tp[1:end-1])) / 2
-    return (fp, tp), auc
-end
-
 function plot_relative_calibration_curves(probs_torch::AbstractMatrix{FloatType}, labels_torch::AbstractVector{Int}, probs_mp::AbstractMatrix{FloatType}, labels_mp::AbstractVector{Int}; title=nothing, dpi=150)
     ece = CalibrationErrors.ECE(CalibrationErrors.MedianVarianceBinning(20), CalibrationErrors.SqEuclidean())
     ece_torch = ece(CalibrationErrors.ColVecs(probs_torch), labels_torch)
@@ -270,9 +210,9 @@ function plot_calibration_curves(curves::Vector{Tuple{Matrix{FloatType},Vector{I
         # Plot the calibration curve
         ece = ece_tool(CalibrationErrors.ColVecs(preds), labels)
         if isnothing(colors)
-            plot!(p, bin_centers, bin_accuracies, lw=3, label="$label. ECE: $(round(ece,digits=4))", xlabel="Predicted probability", ylabel="Proportion of correct predictions", xlim=(0, 1), ylim=(0, 1), dpi=dpi)
+            plot!(p, bin_centers, bin_accuracies, lw=3, label="$label  ECE: $(round(ece,digits=3))", xlabel="Predicted probability", ylabel="Proportion of correct predictions", xlim=(0, 1), ylim=(0, 1), dpi=dpi)
         else
-            plot!(p, bin_centers, bin_accuracies, lw=3, label="$label. ECE: $(round(ece,digits=4))", xlabel="Predicted probability", ylabel="Proportion of correct predictions", xlim=(0, 1), ylim=(0, 1), dpi=dpi, color=colors[k])
+            plot!(p, bin_centers, bin_accuracies, lw=3, label="$label  ECE: $(round(ece,digits=3))", xlabel="Predicted probability", ylabel="Proportion of correct predictions", xlim=(0, 1), ylim=(0, 1), dpi=dpi, color=colors[k])
         end
 
         # Optionally add a histogram of the predicted probabilities
@@ -284,6 +224,7 @@ function plot_calibration_curves(curves::Vector{Tuple{Matrix{FloatType},Vector{I
     if !isnothing(save_name)
         savefig(p, "$(save_name).png")
     end
+
 end
 
 function plot_calibration_scatter(curves::Vector{Tuple{Matrix{Float64},Vector{Int},String}}; n_bins::Int=20, save_name=nothing, dpi=150, colors=nothing, bigger_font=false)
@@ -376,17 +317,3 @@ function plot_ood_roc_curves(curves::Vector{Tuple{Matrix{FloatType},Matrix{Float
     end
 end
 
-function get_calibration_stats(probs::AbstractMatrix{FloatType}, labels::AbstractVector{Int}, probs_ood::AbstractMatrix{FloatType})
-    ece_tool = CalibrationErrors.ECE(CalibrationErrors.MedianVarianceBinning(20), CalibrationErrors.SqEuclidean())
-    ece = ece_tool(CalibrationErrors.ColVecs(probs), labels)
-
-    sorted_accs = get_sorted_accuracies(probs, labels)
-    auroc = area_under_curve(sorted_accs[2])
-
-    ood_roc, ood_auroc = get_roc(probs, probs_ood)
-
-    # Negative Log Likelihood
-    @tullio a[j] := probs[labels[j], j]
-    nll = -1 / length(a) * sum(log.(a))
-    return ece, auroc, ood_auroc, nll
-end

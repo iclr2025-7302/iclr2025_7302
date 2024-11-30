@@ -11,7 +11,7 @@ from torch.optim.lr_scheduler import StepLR
 from tqdm import tqdm
 import h5py
 
-# python mnist.py & python mnist.py --softmax & python mnist.py --normalize & python mnist.py --softmax --normalize & python mnist.py --lenet & python mnist.py --softmax --lenet & python mnist.py --normalize --lenet & python mnist.py --softmax --normalize --lenet
+# python general_training_scripts/mnist.py & python general_training_scripts/mnist.py --softmax & python general_training_scripts/mnist.py --normalize & python general_training_scripts/mnist.py --softmax --normalize & python general_training_scripts/mnist.py --lenet & python general_training_scripts/mnist.py --softmax --lenet & python general_training_scripts/mnist.py --normalize --lenet & python general_training_scripts/mnist.py --softmax --normalize --lenet
 
 model_name = "linear256"
 directory = Path("./models/experiment1_sgd_torch")
@@ -136,7 +136,6 @@ def test(model, device, test_loader, addition="", save_labels=True):
 
 
 def main():
-    # Sorry for using (and modifying!) global variables... I didn't have the time to build a proper torch setup here...
     global USE_SOFTMAX
     global USE_LENET
     global model_name
@@ -200,7 +199,6 @@ def main():
 
 
     for n in [80, 160, 320, 640, 1280, 2560, 5120, 10240, 60000]:
-    # for n in [60000]:
         torch.manual_seed(args.seed)
 
         if use_cuda:

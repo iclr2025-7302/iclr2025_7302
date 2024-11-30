@@ -1,8 +1,10 @@
+data/
 plots/
 models/
 
 *.h5
 *.png
+*.jls
 
 settings.json
 *.csv
