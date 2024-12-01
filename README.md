@@ -1,6 +1,14 @@
 # Scalable Approximate Belief Propagation for Bayesian Neural Networks
 
 ### Setup
+Our library and experiments are mostly written in Julia.
+You need version 1.11.0 or higher.
+For information on how install it, see [here](https://julialang.org/downloads/).
+Or just run
+``` bash
+curl -fsSL https://install.julialang.org | sh
+```
+
 It is useful to create a new user-wide Julia env that is not constrained to one repository or directory. Julia offers this feature as "shared env", which can be used when activating julia in the command line. VSCode also has some button (at the bottom) that allows to set the julia env.
 
 
@@ -19,6 +27,10 @@ If the machine has a CUDA GPU, then also install CUDA additionally. All code sho
 import Pkg; Pkg.add("CUDA")
 ```
 
+For running the experiments you also need to createthe conda environment specified in `conda_environment.yml`:
+``` bash
+conda env create -f conda_environment.yaml
+```
 
 ### Running the experiments
 
@@ -29,6 +41,9 @@ You can run all experiments at once by running
 ```
 The **CIFAR-10** experiments can be run individually via
 ``` bash
+conda init;
+conda deactivate;
+conda activate mp-bnns-experiments;
 julia --project=@bnn_mp cifar10_exp.jl &&
 python cifar10_exp.py --optimizer=AdamW &&
 python cifar10_exp.py --optimzier=IVON &&
@@ -36,8 +51,10 @@ julia --project=@bnn_mp cifar10_eval.jl
 ```
 The **synthetic** data demonstration can be run individually via
 ``` bash
-julia --project=@bnn_mp toy_ood_uncertainty.jl
 ```
+
+If you want to run some experiments individually, have a look at the `run_all_experiments.sh` script.
+It should be self-explanatory.
 
 ### Library Overview
 

@@ -3,7 +3,6 @@ include("lib/utils.jl")
 include("lib/datasets.jl")
 include("lib/factor_graph.jl")
 include("lib/plotting.jl")
-include("./exp_base.jl")
 using HDF5
 import Images
 using Statistics

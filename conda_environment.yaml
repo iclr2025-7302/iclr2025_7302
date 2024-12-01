@@ -2,6 +2,7 @@ name: mp-bnns-experiments
 channels:
   - pytorch
   - nvidia
+  - conda-forge
   - defaults
 dependencies:
   - python
@@ -9,8 +10,11 @@ dependencies:
   - pytorch
   # - pytorch-cuda # uncomment if you want to use CUDA
   - torchvision
-  # - ivon
   - scipy
   - tqdm
+  - huggingface_hub
+  - pip
+  - pip:
+    - ivon-opt
 
 # pip install ivon google-api
